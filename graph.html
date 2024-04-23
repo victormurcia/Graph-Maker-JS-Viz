@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Graph with Draggable Nodes</title>
+    <style>
+        body {
+            font-family: Helvetica;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+			overflow: hidden;
+        }
+
+        #container {
+            width: 1000px; /* Width of the SVG for alignment */
+            text-align: center;
+			overflow: visible;
+        }
+
+        #graph-container {
+            width: 800px;
+            height: 600px;
+            position: relative;
+            margin: auto; /* Center the SVG horizontally */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #graph {
+            width: 100%;
+            height: 100%;
+        }
+
+        .bounding-box {
+            fill: none;
+            stroke: #999;
+            stroke-width: 2px;
+            pointer-events: none;
+        }
+
+        .label {
+            font-family: Helvetica;
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .link {
+            stroke: #666;
+            stroke-width: 2px;
+        }
+		
+		.data-panel {
+				display: flex;
+				flex-direction: column;
+				margin-left: 20px; /* Space between the graph and the tables */
+				overflow-y: auto;
+				max-height: 90vh;
+			}
+        
+		button {
+			background-color: #4CAF50; /* Green background */
+			color: white;
+			padding: 15px 32px;
+			text-align: center;
+			text-decoration: none;
+			display: inline-block;
+			font-size: 16px;
+			margin: 4px 2px;
+			cursor: pointer;
+			border: none;
+			border-radius: 4px;
+		}
+
+		button:hover {
+			background-color: #45a049; /* Darker shade on hover */
+		}
+
+        h1 {
+			position: fixed; /* Makes the header stay in place even if the rest of the content moves */
+			top: 10px; /* Position from the top */
+			left: 50%;
+			transform: translateX(-50%); /* Centers the title */
+			z-index: 1000; /* Ensures it stays above other content */
+		}
+		table {
+			width: 100%; /* Use the full width of its container */
+			border-collapse: collapse; /* Ensures borders between cells are merged */
+			box-shadow: 0 4px 8px rgba(0,0,0,0.1); /* Adds subtle shadow for depth */
+			background-color: #fff; /* Light background for the table */
+			margin-top: 20px; /* Space from other content */
+			border-radius: 8px; /* Rounded corners */
+			overflow: hidden; /* Ensures the border radius clips the content */
+		}
+
+		th, td {
+			border: 1px solid #ddd; /* Lighter border color for less visual weight */
+			padding: 12px 15px; /* Spacious padding for readability */
+			text-align: left; /* Align text to the left */
+			font-size: 16px; /* Slightly larger text for readability */
+		}
+
+		th {
+			background-color: #f4f4f4; /* Slightly darker background for headers */
+			background: linear-gradient(to bottom, #f4f4f4, #e2e2e2);
+			color: #333; /* Dark text for contrast */
+			font-weight: bold; /* Bold font for headers */
+		}
+		tr:hover {
+			background-color: #e0e0e0; /* Highlight rows on hover for better focus */
+		}
+		tr:nth-child(odd) {
+			background-color: #f7f7f7; /* Light grey for every other row */
+		}
+		input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+    </style>
+    <!-- Include D3.js library -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <div style="display: flex;"> <!-- This flex container will arrange the graph and tables side by side -->
+        <div id="container">
+            <h1>Interactive Graph with Draggable Nodes</h1>
+            <div id="graph-container">
+                <!-- SVG container for graph -->
+                <svg id="graph" width="800" height="600">
+                    <!-- Add a 'g' element for zoomable and draggable content -->
+                    <g id="content"></g>
+                    <!-- Draw the bounding box -->
+                    <rect class="bounding-box" x="20" y="20" width="760" height="560"></rect>
+                </svg>
+            </div>
+            <!-- Buttons for adding and deleting nodes, centered below the SVG -->
+            <div style="text-align: center;">
+                <button style="height:80px;width:200px" onclick="addNode()">Add Node</button>
+                <button style="height:80px;width:200px" onclick="deleteNode()">Delete Node</button>
+            </div>
+        </div>
+        <div class="data-panel"> <!-- New class for proper alignment and styling -->
+            <h2>Node Positions</h2>
+            <table id="nodeTable">
+                <tr>
+                    <th>Node ID</th>
+                    <th>X Position</th>
+                    <th>Y Position</th>
+                </tr>
+            </table>
+            <h2>Edges</h2>
+            <table id="edgeTable">
+                <tr>
+                    <th>Source</th>
+                    <th>Target</th>
+					<th>Length</th>
+                </tr>
+            </table>
+        </div>
+    </div>
+    <br>
+
+    <!-- JavaScript code for graph -->
+    <script>
+	
+        const svg = d3.select("#graph");
+        const content = d3.select("#content");
+        const width = +svg.attr("width");
+        const height = +svg.attr("height");
+        const margin = 20;
+        const boundedWidth = width - 2 * margin;
+        const boundedHeight = height - 2 * margin;
+        let selectedNode = null;
+
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10])
+            .on("zoom", zoomed);
+        content.call(zoom);
+
+        let nodes = [
+            { id: 0, x: 100, y: 100, label: "Node 0" },
+            { id: 1, x: 200, y: 200, label: "Node 1" },
+            { id: 2, x: 300, y: 300, label: "Node 2" }
+        ];
+        let links = [];
+
+		const simulation = d3.forceSimulation(nodes)
+			.force("charge", d3.forceManyBody().strength(0))
+			.force("link", d3.forceLink(links).id(d => d.id).distance(d => d.distance || 100))
+			.force("x", d3.forceX(width / 2).strength(0.001))
+			.force("y", d3.forceY(height / 2).strength(0.001))
+			.force("collide", d3.forceCollide().radius(30).strength(0.1))
+			.on("tick", ticked);
+		
+		updateTables();
+
+        let link = content.selectAll(".link")
+            .data(links)
+            .enter().append("line")
+            .attr("class", "link");
+
+        let node = content.selectAll(".node")
+            .data(nodes, d => d.id)
+            .enter().append("circle")
+            .attr("class", "node")
+            .attr("r", 10)
+            .on("click", selectNode)
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        let label = content.selectAll(".label")
+            .data(nodes)
+            .enter().append("text")
+            .attr("class", "label")
+            .text(d => d.label);
+		
+		function updateTables() {
+			// Node Table
+			const nodeTable = d3.select("#nodeTable");
+			let nodeRows = nodeTable.selectAll("tr.node").data(nodes, d => d.id);
+
+			nodeRows.exit().remove();
+
+			let newNodeRows = nodeRows.enter().append("tr").attr("class", "node");
+			nodeRows = newNodeRows.merge(nodeRows);
+
+			nodeRows.html(''); // Clear existing rows to refresh them
+			nodeRows.append("td").append("input")
+				.attr("type", "text")
+				.attr("value", d => d.label)
+				.on("change", (event, d) => {
+					const newLabel = event.target.value;
+					if (nodes.some(n => n.label === newLabel && n !== d)) {
+						alert("Label already in use. Please use a unique label.");
+						event.target.value = d.label; // Reset to original label if not unique
+						return;
+					}
+					d.label = newLabel; // Update the label in the data
+					restartSimulation(); // Restart to see changes
+				});
+			nodeRows.append("td").text(d => Math.round(d.x));
+			nodeRows.append("td").text(d => Math.round(d.y));
+
+			// Edge Table
+			const edgeTable = d3.select("#edgeTable");
+			let edgeRows = edgeTable.selectAll("tr.edge").data(links, d => `${d.source.id}-${d.target.id}`);
+
+			edgeRows.exit().remove();
+
+			let newEdgeRows = edgeRows.enter().append("tr").attr("class", "edge");
+			edgeRows = newEdgeRows.merge(edgeRows);
+
+			edgeRows.html(''); // Clear and refresh
+			edgeRows.append("td").text(d => d.source.label);
+			edgeRows.append("td").text(d => d.target.label);
+			edgeRows.append("td").append("input")
+				.attr("type", "number")
+				.attr("value", d => d.distance || 100)
+				.on("change", (event, d) => {
+					d.distance = +event.target.value;
+					simulation.force("link").links(links); // Re-apply link distances
+					simulation.alpha(1).restart(); // Restart simulation to apply changes
+				});
+		}
+		
+        function zoomed(event) {
+            const { transform } = event;
+            content.attr("transform", transform);
+        }
+
+		function ticked() {
+			node.attr("cx", d => d.x)
+				.attr("cy", d => d.y);
+
+			link.attr("x1", d => d.source.x)
+				.attr("y1", d => d.source.y)
+				.attr("x2", d => d.target.x)
+				.attr("y2", d => d.target.y);
+
+			label.attr("x", d => d.x + 12)
+				 .attr("y", d => d.y + 3);
+		}
+		
+		function updateNodeId(node, newLabel) {
+			// Check for uniqueness of the new label if necessary
+			if (nodes.some(n => n.label === newLabel && n !== node)) {
+				alert("Label already in use. Please use a unique label.");
+				return;
+			}
+
+			// Update the node's label
+			node.label = newLabel;
+
+			// Update visual representation
+			label.filter(d => d === node).text(newLabel);
+
+			// Restart simulation to reflect label changes in the graph
+			restartSimulation();  // This may not be necessary if you're only changing labels, but depends on your setup.
+			updateTables();  // Refresh table entries.
+		}
+
+		function selectNode(event, d) {
+			if (!selectedNode) {
+				selectedNode = d;
+			} else if (selectedNode !== d) {
+				const newLink = { source: selectedNode, target: d, distance: 100 }; // Default distance
+				links.push(newLink);
+				selectedNode = null;
+				restartSimulation(); // Restart to include new link
+				updateTables();
+			} else {
+				selectedNode = null; // Deselect if the same node is clicked
+			}
+		}
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+			updateTables();
+        }
+
+        function addNode() {
+            const newNode = { 
+                id: nodes.length, 
+                x: Math.random() * (boundedWidth - 2 * margin) + margin, 
+                y: Math.random() * (boundedHeight - 2 * margin) + margin,
+                label: "Node " + (nodes.length)
+            };
+            nodes.push(newNode);
+            restartSimulation();
+			updateTables();
+        }
+
+        function deleteNode() {
+            if (nodes.length > 0) {
+                nodes.pop();
+                restartSimulation();
+				updateTables();
+            }
+        }
+
+		function restartSimulation() {
+			// Nodes
+			node = content.selectAll(".node")
+				.data(nodes, d => d.id)
+				.join(
+					enter => enter.append("circle")
+						.attr("class", "node")
+						.attr("r", 10)
+						.on("click", selectNode)
+						.call(d3.drag()
+							.on("start", dragstarted)
+							.on("drag", dragged)
+							.on("end", dragended)),
+					update => update,
+					exit => exit.remove()
+				);
+
+			// Links
+			link = content.selectAll(".link")
+				.data(links, d => `${d.source.id}-${d.target.id}`)
+				.join(
+					enter => enter.append("line")
+						.attr("class", "link"),
+					update => update,
+					exit => exit.remove()
+				);
+
+			// Labels
+			label = content.selectAll(".label")
+				.data(nodes, d => d.id)
+				.join(
+					enter => enter.append("text")
+						.attr("class", "label")
+						.text(d => d.label),
+					update => update.text(d => d.label),
+					exit => exit.remove()
+				);
+
+			// Ensure the simulation uses updated nodes and links
+			simulation.nodes(nodes);
+			simulation.force("link").links(links);
+			simulation.alpha(1).restart();
+		}
+    </script>
+</body>
+</html>
